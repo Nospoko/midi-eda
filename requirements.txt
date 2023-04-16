@@ -1,2 +1,2 @@
-fortepyan>=0.1.9
+fortepyan>=0.1.10
 datasets==2.11.0
