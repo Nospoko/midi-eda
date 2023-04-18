@@ -107,56 +107,6 @@ def calculate_group_shifts(
     return left_shifts, right_shifts
 
 
-def main(
-    piece: MidiPiece,
-    n: int = 16,
-    gram_id: int = 0,
-):
-    df, pitch_sequence = process_piece(piece, n)
-
-    # Find exact copies of "ngram seeds"
-    gram = df.ngram.value_counts().index[gram_id]
-    idxs = np.where(df.ngram == gram)[0]
-    idxs = filter_overlaping_sequences(idxs, n)
-
-    # Fuzzy-wuzzy extension of thee seeds, *threshold* is a measure
-    # of deviation between two sequences that are being compared
-    # "if the sequence is extended further, next *threshold* notes
-    # are going to be different between both sequences
-    threshold = 4
-    left_shifts, right_shifts = calculate_group_shifts(
-        pitch_sequence=pitch_sequence,
-        idxs=idxs,
-        threshold=threshold,
-        n=n,
-    )
-
-    # Everything below has to be automated
-
-    # Use those thresholds to find groups of similar fragments
-    # based on the same ngram seed
-    variant = select_variants(
-        idxs=idxs,
-        left_shifts=left_shifts,
-        right_shifts=right_shifts,
-    )
-    idxs = variant.idxs
-    left_shift = variant.left_shift
-    right_shift = variant.right_shift
-
-    howmany = len(idxs)
-    print('n:', howmany, 'left:', left_shift, 'right:', right_shift)
-
-    fig, axes = plt.subplots(nrows=howmany, ncols=1, figsize=[10, 2 * howmany])
-    for ax, it in zip(axes, idxs):
-        p = piece[it - left_shift: it + n + right_shift]
-        pr = PianoRoll(p)
-        ff.roll.draw_piano_roll(ax=ax, piano_roll=pr)
-        ax.set_title(f"Index: {it}")
-
-    return idxs
-
-
 def select_variants(
     idxs: list[int],
     left_shifts: np.array,
@@ -167,8 +117,8 @@ def select_variants(
         for jt in range(5):
             left_shift = jt * 5
             right_shift = it * 5
-            ids = right_shifts > right_shift
-            jds = left_shifts > left_shift
+            ids = right_shifts >= right_shift
+            jds = left_shifts >= left_shift
 
             kds = ids & jds
             top_row = kds.sum(1).argmax()
@@ -193,3 +143,106 @@ def select_variants(
 
     selected = score[vds].iloc[idx]
     return selected
+
+
+def deduplicate_ngrams(ngrams: list[str], threshold: int) -> list[str]:
+    selected_grams = []
+    for gram in ngrams:
+        if not any([Levenshtein.distance(gram, s) <= threshold for s in selected_grams]):
+            selected_grams.append(gram)
+
+    return selected_grams
+
+
+def remove_duplicate_ngrams(ngrams: list[str], threshold: int) -> list[str]:
+    unique_ngrams = []
+
+    # Iterate through each n-gram in the input list
+    for ngram in ngrams:
+        # Check if the current n-gram is similar to any selected n-gram
+        # by comparing their Levenshtein distances
+        is_similar = any([
+            Levenshtein.distance(ngram, existing_ngram) <= threshold
+            for existing_ngram in unique_ngrams
+        ])
+
+        # If the current n-gram is not similar to any existing unique n-grams,
+        # add it to the unique_ngrams list
+        if not is_similar:
+            unique_ngrams.append(ngram)
+
+    return unique_ngrams
+
+
+def get_gram_variants(
+    gram: str,
+    pitch_sequence: list[str],
+    df: pd.DataFrame,
+    n: int,
+) -> dict:
+    idxs = np.where(df.ngram == gram)[0]
+    idxs = filter_overlaping_sequences(idxs, n)
+
+    # Fuzzy-wuzzy extension of thee seeds, *threshold* is a measure
+    # of deviation between two sequences that are being compared
+    # "if the sequence is extended further, next *threshold* notes
+    # are going to be different between both sequences
+    threshold = 4
+    left_shifts, right_shifts = calculate_group_shifts(
+        pitch_sequence=pitch_sequence,
+        idxs=idxs,
+        threshold=threshold,
+        n=n,
+    )
+
+    # Use those thresholds to find groups of similar fragments
+    # based on the same ngram seed
+    variant = select_variants(
+        idxs=idxs,
+        left_shifts=left_shifts,
+        right_shifts=right_shifts,
+    )
+
+    return variant.to_dict()
+
+
+def draw_vairant(
+    variant: dict,
+    piece: MidiPiece,
+    n: int,
+):
+    howmany = variant["n_variants"]
+    left_shift = variant["left_shift"]
+    right_shift = variant["right_shift"]
+    idxs = variant["idxs"]
+    print('left:', left_shift, 'right:', right_shift)
+
+    fig, axes = plt.subplots(nrows=howmany, ncols=1, figsize=[10, 2 * howmany])
+    for ax, it in zip(axes, idxs):
+        p = piece[it - left_shift: it + n + right_shift]
+        pr = PianoRoll(p)
+        ff.roll.draw_piano_roll(ax=ax, piano_roll=pr)
+        ax.set_title(f"Index: {it}")
+
+
+def midi_piece_clustering(piece: MidiPiece, n: int):
+    df, pitch_sequence = process_piece(piece, n)
+
+    gram_counts = df.ngram.value_counts()
+    ids = gram_counts > 2
+    top_grams = gram_counts[ids].index
+
+    duplication_threshold = 2 / 3 * n
+    selected_grams = remove_duplicate_ngrams(top_grams, threshold=duplication_threshold)
+
+    variants = []
+    for gram in selected_grams:
+        variant = get_gram_variants(
+            gram=gram,
+            pitch_sequence=pitch_sequence,
+            df=df,
+            n=n,
+        )
+        variants.append(variant)
+
+    return variants
