@@ -243,6 +243,7 @@ def midi_piece_clustering(piece: MidiPiece, n: int):
             df=df,
             n=n,
         )
-        variants.append(variant)
+        if variant["n_variants"] > 1:
+            variants.append(variant)
 
     return variants
