@@ -8,12 +8,16 @@ import fortepyan as ff
 from fortepyan import MidiPiece
 from fortepyan.viz.structures import PianoRoll
 
-pitch_map = {20 + it: string.printable.strip()[it] for it in range(90)}
+PITCH_MAP = {20 + it: string.printable.strip()[it] for it in range(90)}
 
 
-def process_piece(piece: MidiPiece, n: int = 16):
+def prepare_pitch_ngrams(piece: MidiPiece, n: int = 16):
     df = piece.df.copy()
-    df["pitch_char"] = df.pitch.map(pitch_map)
+
+    # There are <90 pitches, and 94 printable characters
+    # We convert pitches to unique chars - this makes
+    # Fuzzy-wuzzy Levenshtein string matching easier to follow
+    df["pitch_char"] = df.pitch.map(PITCH_MAP)
 
     howmany = piece.size - n + 1
 
@@ -113,8 +117,8 @@ def select_variants(
     right_shifts: np.array,
 ):
     scores = []
-    for it in range(5):
-        for jt in range(5):
+    for it in range(10):
+        for jt in range(10):
             left_shift = jt * 5
             right_shift = it * 5
             ids = right_shifts >= right_shift
@@ -225,16 +229,22 @@ def draw_vairant(
         ax.set_title(f"Index: {it}")
 
 
-def midi_piece_clustering(piece: MidiPiece, n: int):
-    df, pitch_sequence = process_piece(piece, n)
+def midi_piece_clustering(piece: MidiPiece, n: int) -> pd.DataFrame:
+    df, pitch_sequence = prepare_pitch_ngrams(piece, n)
 
+    # Select sequence seeds with multiple occurances
     gram_counts = df.ngram.value_counts()
     ids = gram_counts > 2
     top_grams = gram_counts[ids].index
 
+    # If a sequence starts at *idx*, it's very likely that we'll get
+    # another set of sequences starting at *idx + m* (with small m)
+    # This step tries to filter out those duplicates
     duplication_threshold = 2 / 3 * n
     selected_grams = remove_duplicate_ngrams(top_grams, threshold=duplication_threshold)
 
+    # Each ngram seed is used to find longer sequences that are
+    # simillar within some range of some metric, see *calculate_group_shifts*
     variants = []
     for gram in selected_grams:
         variant = get_gram_variants(
@@ -243,7 +253,13 @@ def midi_piece_clustering(piece: MidiPiece, n: int):
             df=df,
             n=n,
         )
+
+        # We only care for sequences that were played more than once
+        # Singular occurances should not get there, but apparently
+        # the above logic is not air tight :see_no_evil:
         if variant["n_variants"] > 1:
             variants.append(variant)
 
-    return variants
+    df = pd.DataFrame(variants)
+    df = df.sort_values('n_variants', ascending=False, ignore_index=True)
+    return df
