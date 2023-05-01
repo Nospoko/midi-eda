@@ -34,7 +34,44 @@ def run(piece: MidiPiece, n: int = 16) -> pd.DataFrame:
             variants.append(variant)
 
     df = pd.DataFrame(variants)
-    df = df.sort_values('n_variants', ascending=False, ignore_index=True)
+    if not df.empty:
+        df = remove_duplicate_variants(df, n)
+        df = df.sort_values('n_variants', ascending=False, ignore_index=True)
+
+    return df
+
+
+def remove_duplicate_variants(df: pd.DataFrame, n: int) -> pd.DataFrame:
+    # Initialize an empty list to hold unique variants
+    unique_variants = []
+
+    for it, row in df.iterrows():
+        # Get the variant indices of the current row
+        idxs = row.idxs
+
+        # Assume the current row is not similar to any existing unique variants
+        is_similar = False
+
+        # Iterate over each existing unique variant
+        for variant in unique_variants:
+            # Calculate the absolute differences between the current variant and the existing variant
+            diffs = np.abs(idxs[:, np.newaxis] - variant.idxs).flatten()
+
+            # Check which differences are less than the threshold n
+            ids = diffs < n
+
+            # If all the relevant differences are less than n, the two variants are considered similar
+            if ids.sum() == row.n_variants:
+                # Mark the current row as similar to the existing variant and break out of the loop
+                is_similar = True
+                break
+
+        # If the current row is not similar to any existing unique variants, add it to the list
+        if not is_similar:
+            unique_variants.append(row)
+
+    df = pd.DataFrame(unique_variants).reset_index(drop=True)
+
     return df
 
 
